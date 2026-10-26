@@ -1,0 +1,284 @@
+---
+title: "IPBES_Map_Guideline_Tutorial"
+author: "Annabell Macphee"
+date: "2026-09-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Issues
+
+Technical issues or ideas for improvement can be emailed to aidin.niamir@senckenberg.de .
+
+
+## IPBES map guideline tutorial
+
+This is a walk-through tutorial on how to create maps using different sources of public data in accordance with the IPBES Technical Guidelines. Please note that to ensure all maps load correctly in the markdown file, run full code chunks rather than single code (in a script, the maps will load when running single lines of code).
+
+First, load the libraries and data needed.
+
+```{r libraries and data, include = FALSE}
+# Set working directory to current file location
+wd <- setwd(getwd())
+message("Working directory set to: ", getwd())  
+
+# Install relevant packages from renv.lock file
+if (!require("renv")) install.packages("renv")
+library(renv)
+renv::restore(project = wd, prompt = F)
+
+# Tool libraries
+library(terra)
+library(sf)
+library(dplyr)
+library(magrittr)
+library(countrycode)
+library(httr)
+library(envirem)
+library(ggplot2)
+library(ggspatial)
+
+# Data libraries
+library(geodata)
+library(FAOSTAT)
+library(rnaturalearth)
+```
+
+## Projections
+
+A geographical projection is a representation of the world in a 2-dimensional space. This can be done in many different mathematical ways. The projection most recently recommended by the United Nations General Assembly (as of 04/09/2026) is the Equal Earth Projection since it best represents the true geographic size of the world's regions.
+
+```{r projection}
+# Define the projection using PROJ.4 notation
+crs <- "+proj=eqearth +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+```
+
+## Raster data
+
+Raster data is represented as pixels that together form a grid. Continuous data can be well represented in raster format.
+
+```{r plot raster data, fig.width=10, fig.height=5}
+# Load January precipitation data from world clim
+prec <- geodata::worldclim_global(var = "prec", res = 10, path = "data")[[1]]
+terra::crs(prec) # world clim data uses unprojected coordinate system
+
+
+# Ensure NAs are converted into correct format
+jp <- prec * 1 
+
+
+# Project world clim data onto Equal Earth
+eqearth <- terra::project(jp, crs, mask=TRUE)
+
+
+# Creates latitude and longitude labels and graticules (=latitutude and longitude lines)
+lat <- c(-90, -60, -30, 0, 30, 60, 90)
+long <- c(-180, -120, -60, 0, 60, 120, 180)
+lines <- terra::graticule(lon = long, lat = lat, crs = crs)
+
+
+# Plot graticules and precipitation data
+plot(lines, lty = 5, col = "grey", retro=T) # plot graticules 
+plot(eqearth, axes = F, col = rev(terrain.colors(255)), add = TRUE) # plot the raster
+```
+
+## Vector data
+
+Vector data is represented by points, lines, or polygons/areas. Vector data is useful to portray boundaries or discrete data on a map. Here, coast lines are used to demonstrate what vector data looks like.
+
+```{r plot vector data}
+# Download land boundaries
+coast <- rnaturalearth::ne_download(scale = 50, type = 'coastline', category = 'physical', returnclass = "sf")
+coast <- coast %>%
+  sf::st_transform(crs = crs) # another way of projecting onto the Equal Earth format
+
+# Plot regions
+par(mar = c(0,0,0,0)) # set frame size
+plot(lines, lty = 5, col = "grey", retro=T)
+plot(coast, col="black", add = TRUE) 
+```
+
+## Combining Raster and Vector Data
+
+It can be useful to combine the two data types. Plotting them on top of each other reveals how precipitation differs between continents.
+
+```{r plot raster and vector data, fig.width=10, fig.height=5}
+par(mar = c(0,0,0,0))
+plot(lines, lty = 5, col = "grey", retro=T)
+plot(eqearth, axes = F, col = rev(terrain.colors(255)), add = TRUE)
+plot(coast, col="black", add = TRUE) 
+```
+
+## Further layers
+
+Loads of layers can be added onto a map. Below are some common ones that may be useful. Please note that country borders should not be included in IPBES maps.
+
+```{r plotting several vector layers}
+# Download ocean shapes and project onto Equal Earth
+ocean <- rnaturalearth::ne_download(scale = 50, type = 'ocean', category = 'physical', returnclass = "sf")
+ocean <- ocean %>%
+  sf::st_transform(crs = crs)
+ocean <- ocean[,1]
+
+
+# Download land boundaries
+land <- rnaturalearth::ne_download(scale = 50, type = 'land', category = 'physical', returnclass = "sf")
+land <- land %>%
+  sf::st_transform(crs = crs)
+
+
+# Download major lakes
+lakes <- rnaturalearth::ne_download(scale = 50, type = 'lakes', category = 'physical', returnclass = "sf")
+lakes <- lakes %>%
+  sf::st_transform(crs = crs)
+
+
+# Plot new layers
+par(mar = c(0,0,0,0)) # set frame size
+plot(lines, lty = 5, col = "grey", retro=T)
+plot(ocean, col = alpha("lightskyblue", 0.3), add = TRUE)
+plot(land, col = "white", add = TRUE)
+plot(lakes, col = "lightblue", add = TRUE)
+box(which = "plot", lty = "solid") # create figure frame
+```
+
+## How to handle country-level data
+
+Since plotting country borders should be avoided in all IPBES reports, it is important to know how to aggregate country-level data by regions. Find an example on how to do this with the example of using continents as regions below.
+
+```{r handling country level data, fig.width=8, fig.height=5}
+# Download population data from the Food and Agriculture Organisation of the United Nations; first register at https://www.fao.org/faostat/en/#developer-portal
+#FAOSTAT::faostat_login(username = "yourusername", password = "yourpassword") # use your own credentials
+#FAOSTAT::download_faostat_bulk("http://fenixservices.fao.org/faostat/static/bulkdownloads/Population_E_All_Data_(Normalized).zip", getwd())
+
+
+# Load the data
+pop_raw <- FAOSTAT::read_faostat_bulk("Population_E_All_Data_(Normalized).zip")
+
+
+# Download countries shapefile
+countries <- rnaturalearth::ne_countries(scale = 50, returnclass = "sf")
+countries <- countries %>%
+  sf::st_transform(crs = crs)
+
+
+# Clean the data to contain both sexes data from 2018
+pop_2018 <- pop_raw %>% 
+  dplyr::filter(element == "total_population___both_sexes" &
+                  year == 2018) %>% 
+  dplyr::select(area_code,
+                area,
+                element,
+                year,
+                unit,
+                value)
+tail(pop_2018$area, 35)
+
+# When looking at the tail of the pop_2018 dataset, the last 34 rows are not country-level but pre-aggregated data. Since these do not reflect the regions of interest, they should be removed.
+pop_2018 <- pop_2018[1:234, ] # Selects the first 234 records, thus removing the last 34 which are aggregated data
+
+# To ensure continuity between the UN and Zenodo data regarding country naming conventions, ISO3 codes should be used instead of common country names 
+pop_2018$ISO3_CODE <- countrycode(pop_2018$area, origin = "country.name", destination = "iso3c")
+
+# check for anything that didn't match
+print(pop_2018[is.na(pop_2018$ISO3_CODE), c("area", "ISO3_CODE")])
+
+# assign missing ISO3 codes manually, find the codes here: https://www.iso.org/obp/ui/#search
+pop_2018[57,7] <- "CUW" # Curaçao
+pop_2018[173,7] <- "REU" # Réunion
+pop_2018[177,7] <- "BLM" # Saint-Barthélemy
+pop_2018[214,7] <- "TUR" # Türkiye
+pop_2018 <- na.omit(pop_2018) # removes possible NAs
+
+# Now join the continents onto our pop_2018 data
+names(countries)[names(countries) == "iso_a3"] <- "ISO3_CODE" # rename column holding ISO3 codes
+
+continents <-  countries %>%
+  as.data.frame() %>% # drops the spatial attributes
+  dplyr::select(ISO3_CODE, continent)  # filters the columns
+
+pop_2018 <- dplyr::left_join(x = pop_2018, y = continents, by = "ISO3_CODE") %>% # joins data
+  tidyr::drop_na() 
+
+
+# Now, aggregate the data by continents
+pop_2018 <- pop_2018 %>% 
+  dplyr::group_by(continent) %>% # Grouping by continents
+  dplyr::mutate(continent_pop = sum(value)/1000) %>% # calculates total population (millions) per continent
+  dplyr::ungroup()
+
+
+# Prepare data for mapping
+data <- dplyr::full_join(x = countries, y = pop_2018, by = "ISO3_CODE") # to have geo data in same dataframe as regions
+
+data_continent <- data %>% # this dissolves the data by region
+  dplyr::group_by(continent.x) %>% 
+  dplyr::summarise(continent_pop = sum(value, na.rm = T)/1000) 
+
+data_continent$continent_pop <- round(data_continent$continent_pop) # round population numbers to full numbers
+
+
+# Plotting by continents
+par(mar = c(0,0,0,0))
+plot(lines, lty = 5, col = "lightgrey",  retro=T)
+plot(ocean, col = ggplot2::alpha("slategray1", 0.3), add = TRUE) 
+plot(data_continent[,2], breaks = "quantile", add = TRUE)
+box(which = "plot", lty = "solid")
+
+# create unique categories and legend
+palette <- hcl.colors(8, "Reds 3", rev = T) # colours
+
+par(mar = c(0,0,0,0))
+plot(lines, lty = 5, col = "lightgrey",  retro=T)
+plot(ocean, col = ggplot2::alpha("slategray1", 0.3), add = TRUE) 
+plot(data_continent[,2], pal = palette, add = TRUE)
+legend("bottom", # adding the legend last 
+       legend = (data_continent %>% pull(continent_pop) %>% sort()),
+       fill = palette, 
+       horiz = TRUE, bty = "n")
+box(which = "plot", lty = "solid")
+```
+
+## Using ggplot for maps
+
+Most people working in R are familiar with the plotting package ggplot2. Therefore, it is useful to know how to make maps with ggplot2 as well. Specialised packages like terra are better to use for official use as they were specifically designed to handle complex projections and map layouts. But for smaller, quickly produced maps e.g. for data exploration, ggplot2 can work just fine:
+
+```{r map creation with ggplot2}
+land <- rnaturalearth::ne_download(scale = 50, type = 'land', category = 'physical', returnclass = "sf")
+
+# Map of region around Mexico
+ggplot() + 
+  geom_sf(data = land, color = "black", fill = "white") + # plots the land polygons
+  coord_sf(xlim = c(-117.5, -86.5), ylim = c(14.5, 33.0)) + # sets the maps extent
+  theme(panel.grid.major = element_line(color = gray(.5), # sets latitude and longitude lines 
+        linetype = "dashed", size = 0.5),
+        panel.background = element_rect(fill = "#b3e5fc"), # sets background panel color 
+        panel.border = element_rect(colour = "black", fill=NA, size=0.5))
+```
+
+Note: when plotting smaller regions (anything other than a world map) different projections might become appropriate to accurately and nicely reflect the scale of the region on the map. https://projectionwizard.org/ provides a good resource to understand at what scale which projections might be appropriate. It is recommended to research, which projection is best for the specific region and use of a smaller-scale map. https://spatialreference.org/ provides EPSG codes for a vast list of projections.
+
+
+## IPBES regions
+
+If IPBES regions should be plotted, they can be downloaded here (the shapefile is 500MB so this may take a few minutes):
+
+```{r IPBES regions}
+# Download IPBES regions and subregions data from Zenodo
+recordID <- "3923633"
+url_record <- paste0("https://zenodo.org/api/records/", recordID)
+record <- httr::GET(url_record)
+record # Status 200 indicates a successful download
+View(content(record))
+
+
+# Download the regions and subregions shapefile
+url_shape <- content(record)$files[[1]]$links$self # retrieves the link
+httr::GET(url_shape, write_disk("ipbes_regions_subregions.zip", overwrite = T))
+unzip("ipbes_regions_subregions.zip") # unzips shapefile
+shape <- sf::st_read("IPBES_Regions_Subregions2.shp") %>%
+  sf::st_transform(crs = crs)
+```
